@@ -1,3 +1,5 @@
+/* For some reason Intellij Idea wasn't picking up the "envs" property in package.json */
+/* eslint-env jest */
 'use strict'
 
 const Lawos = require('../')
@@ -375,3 +377,43 @@ it('process real queue', () => {
     console.log
   );
 }); */
+
+it('only deletes resolved items', () => {
+  const msgs = {
+    Messages: [
+      { ReceiptHandle: 'a' },
+      { ReceiptHandle: 'b' },
+      { ReceiptHandle: 'c' }
+    ]
+  }
+
+  const Q = new Lawos('http://example.com', {})
+  Q.delete = jest.fn().mockReturnValue(Promise.resolve())
+  Q.handleList = jest.fn().mockReturnValue(Promise.resolve())
+
+  // mocking this in order to verify the `this.metrics.process += 1`
+  Q.aws.sqs.receiveMessage = jest.fn().mockReturnValue({
+    promise: jest.fn().mockReturnValueOnce(Promise.resolve(msgs))
+  })
+
+  Q.item(item => {
+    if (item.ReceiptHandle === 'c') {
+      return Promise.reject(new Error('some error'))
+    }
+    return Promise.resolve()
+  })
+
+  const work = jest.fn()
+    .mockReturnValueOnce(Promise.resolve(false))
+    .mockReturnValue(Promise.resolve(true))
+
+  return Q.work(work).then((stats) => {
+    expect(stats.processed).toBe(3)
+    expect(stats.failed).toBe(1)
+    expect(stats.iteration).toBe(1)
+    expect(Q.delete).toHaveBeenCalledTimes(2)
+    expect(Q.delete).toHaveBeenCalledWith('a')
+    expect(Q.delete).toHaveBeenCalledWith('b')
+    expect(Q.delete).not.toHaveBeenCalledWith('c')
+  })
+})
